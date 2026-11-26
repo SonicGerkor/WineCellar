@@ -55,10 +55,16 @@ void AWCOCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	{
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AWCOCharacter::Move);
+		
 		// Looking
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AWCOCharacter::Look);
+		
 		// Interacting (Grab/Place)
 		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &AWCOCharacter::Interact);
+		
+		// Jump
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 	}
 }
 
@@ -88,6 +94,18 @@ void AWCOCharacter::Look(const FInputActionValue& Value)
 
 void AWCOCharacter::Interact()
 {
+	if (CurrentHeldBottle)
+	{
+		PlaceItem();
+	}
+	else
+	{
+		GrabItem();
+	}
+}
+
+void AWCOCharacter::GrabItem()
+{
 	const FVector Start = FirstPersonCameraComponent->GetComponentLocation();
 	const FVector End = Start + (FirstPersonCameraComponent->GetForwardVector() * InteractionDistance);
 	
@@ -95,51 +113,92 @@ void AWCOCharacter::Interact()
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(this);
 
-	if (CurrentHeldBottle)
+	const FCollisionShape SphereShape = FCollisionShape::MakeSphere(15.0f);
+
+	const bool bHit = GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
+
+	if (bHit && HitResult.GetActor())
 	{
-		// 1. PLACE BOTTLE LOGIC
-		
-		// CRITICAL: Ignore the bottle we are currently holding, or the raycast will hit it
-		QueryParams.AddIgnoredActor(CurrentHeldBottle);
-
-		const bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, QueryParams);
-
-		if (bHit)
+		if (AWCOBottleBase* HitBottle = Cast<AWCOBottleBase>(HitResult.GetActor()))
 		{
-			if (UWCOSlotComponent* HitSlot = Cast<UWCOSlotComponent>(HitResult.GetComponent()))
-			{
-				// Validates placement rules; incorrect placement is mechanically blocked here
-				if (!HitSlot->bIsOccupied && HitSlot->IsValidPlacement(CurrentHeldBottle->GetBottleData()))
-				{
-					CurrentHeldBottle->OnPlaced();
-					
-					// Snap the bottle exactly to the slot's transform
-					CurrentHeldBottle->SetActorTransform(HitSlot->GetComponentTransform());
-					
-					HitSlot->bIsOccupied = true;
-					HitSlot->CurrentBottle = CurrentHeldBottle;
-					CurrentHeldBottle = nullptr;
-					
-					UE_LOG(LogTemp, Warning, TEXT("Bottle permanently placed successfully!"));
-				}
-			}
+			HitBottle->OnPickedUp(HeldItemLocation);
+			CurrentHeldBottle = HitBottle;
+			
+			UE_LOG(LogTemp, Warning, TEXT("Picked up bottle!"));
 		}
 	}
-	else
-	{
-		// 2. GRAB BOTTLE LOGIC
+}
 
-		const bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, QueryParams);
-		DrawDebugLine(GetWorld(), Start, End, FColor::Red, false, 2.0f, 0, 1.0f);
-		if (bHit && HitResult.GetActor())
+void AWCOCharacter::PlaceItem()
+{
+	const FVector Start = FirstPersonCameraComponent->GetComponentLocation();
+	const FVector End = Start + (FirstPersonCameraComponent->GetForwardVector() * InteractionDistance);
+	
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+	QueryParams.AddIgnoredActor(CurrentHeldBottle);
+
+	const FCollisionShape SphereShape = FCollisionShape::MakeSphere(15.0f);
+
+	const bool bHit = GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
+
+	if (bHit)
+	{
+		if (AActor* HitActor = HitResult.GetActor())
 		{
-			if (AWCOBottleBase* HitBottle = Cast<AWCOBottleBase>(HitResult.GetActor()))
-			{
-				HitBottle->OnPickedUp(HeldItemLocation);
-				CurrentHeldBottle = HitBottle;
-				
-				UE_LOG(LogTemp, Warning, TEXT("Picked up bottle!"));
-			}
+		    TArray<UWCOSlotComponent*> ShelfSlots;
+		    HitActor->GetComponents<UWCOSlotComponent>(ShelfSlots);
+
+		    UWCOSlotComponent* ClosestSlot = nullptr;
+		    float ClosestDistSq = MAX_flt;
+
+		    // DEBUG: Draw a RED sphere exactly where your crosshair hit the physical wood
+		    DrawDebugSphere(GetWorld(), HitResult.Location, 5.f, 12, FColor::Red, false, 2.f);
+
+		    for (UWCOSlotComponent* Slot : ShelfSlots)
+		    {
+		        if (Slot && !Slot->bIsOccupied) 
+		        {
+		            float DistSq = FVector::DistSquared(HitResult.Location, Slot->GetComponentLocation());
+		            float ActualDistance = FMath::Sqrt(DistSq); // Convert squared to actual units (cm)
+		            
+		            // DEBUG: Draw a BLUE sphere at the slot's actual coordinate
+		            DrawDebugSphere(GetWorld(), Slot->GetComponentLocation(), 5.f, 12, FColor::Blue, false, 2.f);
+		            
+		            // DEBUG: Draw a GREEN line connecting your hit point to the slot
+		            DrawDebugLine(GetWorld(), HitResult.Location, Slot->GetComponentLocation(), FColor::Green, false, 2.f);
+		            
+		            // DEBUG: Print the exact distance to the screen
+		            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow, 
+		                FString::Printf(TEXT("Slot %s is %f cm away"), *Slot->GetName(), ActualDistance));
+
+		            // I bumped the threshold to 2500.f (50cm) just to see if distance was the issue!
+		            if (DistSq < ClosestDistSq && DistSq < 2500.f) 
+		            {
+		                ClosestDistSq = DistSq;
+		                ClosestSlot = Slot;
+		            }
+		        }
+		    }
+
+		    if (ClosestSlot)
+		    {
+		        GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green, 
+		            FString::Printf(TEXT("SUCCESS: Snapping to %s!"), *ClosestSlot->GetName()));
+		            
+		    	CurrentHeldBottle->AttachToComponent(ClosestSlot, FAttachmentTransformRules::KeepRelativeTransform);
+
+		    	// Shift the bottle forward so its center rests in the slot
+		    	// (Assuming the bottle is ~30cm tall, we shift it by 15cm)
+		    	CurrentHeldBottle->SetActorRelativeLocation(FVector(0.f, 0.f, -20.f));
+		        ClosestSlot->bIsOccupied = true;
+		        CurrentHeldBottle = nullptr; 
+		    }
+		    else
+		    {
+		        GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, TEXT("FAILED: No slot was close enough to the hit location!"));
+		    }
 		}
 	}
 }

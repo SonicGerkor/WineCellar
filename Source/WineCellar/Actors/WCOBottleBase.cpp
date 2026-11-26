@@ -2,6 +2,9 @@
 
 #include "WCOBottleBase.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "WineCellar/Label/WCOLabelWidget.h"
 
 AWCOBottleBase::AWCOBottleBase()
 {
@@ -9,38 +12,69 @@ AWCOBottleBase::AWCOBottleBase()
 
 	BottleMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BottleMesh"));
 	RootComponent = BottleMesh;
-
-	// Ensure the mesh blocks the line trace from the character's camera
 	BottleMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+
+	LabelWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("LabelWidget"));
 	
-	// Optional: Enable physics for when it drops or rolls, though for a strict 
-	// organization game, you might prefer kinematic snapping.
-	BottleMesh->SetSimulatePhysics(true);
+	if (LabelWidgetComponent)
+	{
+		LabelWidgetComponent->SetupAttachment(BottleMesh);
+		LabelWidgetComponent->SetDrawSize(FVector2D(512, 512));
+		LabelWidgetComponent->SetRelativeScale3D(FVector(0.001f));;
+	}
+}
+
+void AWCOBottleBase::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
+void AWCOBottleBase::InitializeWine(const FWineData& InData)
+{
+	BottleData = InData;
+
+	if (LabelWidgetComponent)
+	{
+		LabelWidgetComponent->InitWidget();
+		if (UWCOLabelWidget* LabelWidget = Cast<UWCOLabelWidget>(LabelWidgetComponent->GetUserWidgetObject()))
+		{
+			LabelWidget->UpdateLabelData(BottleData);
+			LabelWidgetComponent->RequestRedraw();
+		}
+
+		if (BottleMesh->GetMaterial(0))
+		{
+			BottleMID = BottleMesh->CreateAndSetMaterialInstanceDynamic(0);
+			if (BottleMID && LabelWidgetComponent->GetRenderTarget())
+			{
+				BottleMID->SetTextureParameterValue(TEXT("LabelTexture"), LabelWidgetComponent->GetRenderTarget());
+			}
+		}
+	}
 }
 
 void AWCOBottleBase::OnPickedUp(USceneComponent* AttachToComponent)
 {
 	if (!AttachToComponent) return;
 
-	// Disable physics and collision so it doesn't bump the player while held
 	BottleMesh->SetSimulatePhysics(false);
 	BottleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	// Attach to the player's holding socket
-	FAttachmentTransformRules AttachmentRules(EAttachmentRule::SnapToTarget, true);
+	const FAttachmentTransformRules AttachmentRules(EAttachmentRule::SnapToTarget, true);
 	AttachToActor(AttachToComponent->GetOwner(), AttachmentRules);
-	
-	// Specifically attach the mesh to the target scene component
 	BottleMesh->AttachToComponent(AttachToComponent, AttachmentRules);
+
+	SetActorTickEnabled(false);
 }
 
 void AWCOBottleBase::OnPlaced()
 {
-	FDetachmentTransformRules DetachmentRules(EDetachmentRule::KeepWorld, true);
+	const FDetachmentTransformRules DetachmentRules(EDetachmentRule::KeepWorld, true);
 	DetachFromActor(DetachmentRules);
 	BottleMesh->DetachFromComponent(DetachmentRules);
 
-	// Disable collision completely so the player's line trace can never pick it up again
 	BottleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	BottleMesh->SetSimulatePhysics(false);
+	BottleMesh->SetSimulatePhysics(false); 
+
+	SetActorTickEnabled(false);
 }

@@ -3,44 +3,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "WCOWineDBEnums.h"
 #include "GameFramework/Actor.h"
 #include "WCOBottleBase.generated.h"
 
+class UWidgetComponent;
 class UStaticMeshComponent;
 
-UENUM(BlueprintType)
-enum class EBottleStyle : uint8
-{
-	None			UMETA(DisplayName = "None"),
-	Bordeaux		UMETA(DisplayName = "Bordeaux (Standard)"),
-	Burgundy		UMETA(DisplayName = "Burgundy (Sloped)"),
-	Flute			UMETA(DisplayName = "Flute (High-Shouldered)"),
-	Champagne		UMETA(DisplayName = "Champagne (Heavy)"),
-	Magnum			UMETA(DisplayName = "Magnum (1.5L)"),
-	Jeroboam		UMETA(DisplayName = "Jeroboam (3.0L)")
-};
-
-UENUM(BlueprintType)
-enum class EWineGrape : uint8
-{
-	None			UMETA(DisplayName = "None"),
-	Malbec			UMETA(DisplayName = "Malbec"),
-	CabernetFranc	UMETA(DisplayName = "Cabernet Franc"),
-	PinotNoir		UMETA(DisplayName = "Pinot Noir"),
-	Chardonnay		UMETA(DisplayName = "Chardonnay")
-};
-
-UENUM(BlueprintType)
-enum class EWineRegion : uint8
-{
-	None			UMETA(DisplayName = "None"),
-	Mendoza			UMETA(DisplayName = "Mendoza"),
-	Bordeaux		UMETA(DisplayName = "Bordeaux"),
-	NapaValley		UMETA(DisplayName = "Napa Valley")
-};
-
 USTRUCT(BlueprintType)
-struct FWineData
+struct FWineData : public FTableRowBase
 {
 	GENERATED_BODY()
 
@@ -50,15 +21,18 @@ struct FWineData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wine Details")
 	EWineRegion Region = EWineRegion::None;
 
-	// The physical style/size of the bottle mesh
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wine Details")
-	EBottleStyle BottleStyle = EBottleStyle::None;
+	EBottleStyle BottleStyle = EBottleStyle::Bordeaux;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wine Details")
 	int32 VintageYear = 2020;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wine Details")
 	FString BrandName = TEXT("Generic Estate");
+
+	// NEW: The logo texture for the label widget to use
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wine Details")
+	UTexture2D* LogoTexture = nullptr;
 };
 
 UCLASS()
@@ -73,10 +47,13 @@ public:
 	// The spatial representation of the bottle
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UStaticMeshComponent* BottleMesh;
-
-	// The data payload for this specific bottle instance
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Data", meta = (ExposeOnSpawn = "true"))
-	FWineData BottleData;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UWidgetComponent* LabelWidgetComponent;
+	
+	// Add this new function:
+	UFUNCTION(BlueprintCallable, Category = "Initialization")
+	void InitializeWine(const FWineData& InData);
 
 	// State changes for grabbing and placing
 	void OnPickedUp(USceneComponent* AttachToComponent);
@@ -84,4 +61,15 @@ public:
 
 	// Getter for the shelf logic to validate placement
 	FORCEINLINE FWineData GetBottleData() const { return BottleData; }
+	
+protected:
+	
+	virtual void BeginPlay() override;
+	
+	FWineData BottleData;
+	
+private:
+	
+	UPROPERTY()
+	UMaterialInstanceDynamic* BottleMID;
 };

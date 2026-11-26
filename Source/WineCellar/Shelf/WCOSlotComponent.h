@@ -15,6 +15,7 @@ class WINECELLAR_API UWCOSlotComponent : public UBoxComponent
 	GENERATED_BODY()
 
 public:
+	
 	UWCOSlotComponent();
 
 	// -- Validation Rules (Data-Oriented) --
@@ -23,7 +24,7 @@ public:
 	EWineGrape AcceptedGrape = EWineGrape::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slot Targets")
-	EBottleStyle AcceptedStyle = EBottleStyle::None;
+	EBottleStyle AcceptedStyle = EBottleStyle::Bordeaux;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slot Targets")
 	EWineRegion AcceptedRegion = EWineRegion::None;
