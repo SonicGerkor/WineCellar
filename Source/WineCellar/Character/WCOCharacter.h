@@ -13,6 +13,8 @@ class USceneComponent;
 class UInputMappingContext;
 class UInputAction;
 class AActor;
+class IWCOInteractable;
+class UWCOSkillComponent;
 
 UCLASS(config=Game)
 class WINECELLAR_API AWCOCharacter : public ACharacter
@@ -25,17 +27,26 @@ public:
 	
 	virtual void BeginPlay() override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	virtual void Tick(float DeltaSeconds) override;
+	
+	FORCEINLINE AWCOBottleBase* GetHeldBottle() const { return HeldBottle; }
+	FORCEINLINE void SetHeldBottle(AWCOBottleBase* InHeldBottle) { HeldBottle = InHeldBottle; }
+	
+	FORCEINLINE UCameraComponent* GetFirstPersonCameraComponent() const { return FirstPersonCameraComponent; }
+	
+	FORCEINLINE UWCOSkillComponent* GetSkillComponent() const { return SkillComponent; }
 
 protected:
 	
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void Interact();
+	
+	IWCOInteractable* CurrentInteractable = nullptr;
 
 private:
 	
-	void GrabItem();
-	void PlaceItem();
+	void PerformInteractionTrace();
 	
 	// -- Components --
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
@@ -44,6 +55,9 @@ private:
 	// The spatial socket where grabbed bottles will attach
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	USceneComponent* HeldItemLocation;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Skills", meta = (AllowPrivateAccess = "true"))
+	UWCOSkillComponent* SkillComponent;
 
 	// -- Enhanced Input Assets --
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
@@ -63,7 +77,7 @@ private:
 
 	// Pointer to the currently held bottle (nullptr if empty-handed)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction|State", meta = (AllowPrivateAccess = "true"))
-	AWCOBottleBase* CurrentHeldBottle;
+	AWCOBottleBase* HeldBottle;
     
 	// Configurable trace distance for grabbing/placing
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))

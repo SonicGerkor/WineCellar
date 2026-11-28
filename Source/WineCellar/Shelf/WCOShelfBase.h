@@ -4,19 +4,24 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "WineCellar/Interfaces/WCOInteractable.h"
 #include "WCOShelfBase.generated.h"
 
 class UStaticMeshComponent;
 class UWCOSlotComponent;
 
 UCLASS()
-class WINECELLAR_API AWCOShelfBase : public AActor
+class WINECELLAR_API AWCOShelfBase : public AActor, public IWCOInteractable
 {
 	GENERATED_BODY()
 	
 public:	
 	
 	AWCOShelfBase();
+	
+	virtual void Interact(AWCOCharacter* Interactor) override;
+	virtual void Highlight() override;
+	virtual void Unhighlight() override;
 
 protected:
 	

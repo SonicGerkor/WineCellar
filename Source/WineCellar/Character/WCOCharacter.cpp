@@ -8,6 +8,7 @@
 #include "DrawDebugHelpers.h"
 #include "WineCellar/Actors/WCOBottleBase.h"
 #include "WineCellar/Shelf/WCOSlotComponent.h"
+#include "WineCellar/Skills/WCOSkillComponent.h"
 
 AWCOCharacter::AWCOCharacter()
 {
@@ -26,15 +27,16 @@ AWCOCharacter::AWCOCharacter()
 	HeldItemLocation = CreateDefaultSubobject<USceneComponent>(TEXT("HeldItemLocation"));
 	HeldItemLocation->SetupAttachment(FirstPersonCameraComponent);
 	HeldItemLocation->SetRelativeLocation(FVector(50.0f, 20.0f, -15.0f));
+	
+	SkillComponent = CreateDefaultSubobject<UWCOSkillComponent>(TEXT("SkillComponent"));
 
-	CurrentHeldBottle = nullptr;
+	HeldBottle = nullptr;
 }
 
 void AWCOCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Add Enhanced Input Mapping Context
 	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
@@ -68,21 +70,29 @@ void AWCOCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	}
 }
 
+void AWCOCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	
+	PerformInteractionTrace();
+}
+
 void AWCOCharacter::Move(const FInputActionValue& Value)
 {
 	const FVector2D MovementVector = Value.Get<FVector2D>();
 
 	if (Controller != nullptr)
 	{
-		// Add movement in forward and right directions
-		AddMovementInput(GetActorForwardVector(), MovementVector.Y);
-		AddMovementInput(GetActorRightVector(), MovementVector.X);
+		const float SpeedMultiplier = SkillComponent->GetModifierValue(ESkillModifierType::MovementSpeed);
+		
+		AddMovementInput(GetActorForwardVector(), MovementVector.Y * SpeedMultiplier);
+		AddMovementInput(GetActorRightVector(), MovementVector.X * SpeedMultiplier);
 	}
 }
 
 void AWCOCharacter::Look(const FInputActionValue& Value)
 {
-	FVector2D LookAxisVector = Value.Get<FVector2D>();
+	const FVector2D LookAxisVector = Value.Get<FVector2D>();
 
 	if (Controller != nullptr)
 	{
@@ -94,111 +104,74 @@ void AWCOCharacter::Look(const FInputActionValue& Value)
 
 void AWCOCharacter::Interact()
 {
-	if (CurrentHeldBottle)
+	if (CurrentInteractable)
 	{
-		PlaceItem();
-	}
-	else
-	{
-		GrabItem();
+		CurrentInteractable->Interact(this);
 	}
 }
 
-void AWCOCharacter::GrabItem()
+void AWCOCharacter::PerformInteractionTrace()
 {
-	const FVector Start = FirstPersonCameraComponent->GetComponentLocation();
-	const FVector End = Start + (FirstPersonCameraComponent->GetForwardVector() * InteractionDistance);
-	
+	// 1. Define the Sweep geometry based on the GDD specs
+	const FVector StartLocation = FirstPersonCameraComponent->GetComponentLocation();
+	const FVector ForwardVector = FirstPersonCameraComponent->GetForwardVector();
+	const FVector EndLocation = StartLocation + (ForwardVector * 250.f); // 250cm max reach
+	const float SphereRadius = 15.f; // 15cm thick detection sphere
+
 	FHitResult HitResult;
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(this);
+	FCollisionQueryParams TraceParams;
+	TraceParams.AddIgnoredActor(this); // Ignore the player's own collision
 
-	const FCollisionShape SphereShape = FCollisionShape::MakeSphere(15.0f);
+	// 2. Perform the Sphere Sweep
+	bool bHit = GetWorld()->SweepSingleByChannel(
+		HitResult,
+		StartLocation,
+		EndLocation,
+		FQuat::Identity,
+		ECC_Visibility, // Trace against anything visible
+		FCollisionShape::MakeSphere(SphereRadius),
+		TraceParams
+	);
 
-	const bool bHit = GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
-
+	// 3. Process the Hit
 	if (bHit && HitResult.GetActor())
 	{
-		if (AWCOBottleBase* HitBottle = Cast<AWCOBottleBase>(HitResult.GetActor()))
+		// Try to cast the hit actor to our Interface
+		IWCOInteractable* HitInteractable = Cast<IWCOInteractable>(HitResult.GetActor());
+
+		if (HitInteractable) // Scenario A: We hit a valid bottle or crate
 		{
-			HitBottle->OnPickedUp(HeldItemLocation);
-			CurrentHeldBottle = HitBottle;
-			
-			UE_LOG(LogTemp, Warning, TEXT("Picked up bottle!"));
+			// If this is a NEW object we weren't looking at during the last frame
+			if (HitInteractable != CurrentInteractable)
+			{
+				// 1. Turn off the outline on the old object (if there was one)
+				if (CurrentInteractable)
+				{
+					CurrentInteractable->Unhighlight();
+				}
+
+				// 2. Turn on the outline for the new object
+				HitInteractable->Highlight();
+
+				// 3. Cache the pointer so the 'E' key knows what to pick up
+				CurrentInteractable = HitInteractable;
+			}
+		}
+		else // Scenario B: We hit a non-interactable object (like a wall or the wooden shelf)
+		{
+			if (CurrentInteractable)
+			{
+				CurrentInteractable->Unhighlight();
+				CurrentInteractable = nullptr;
+			}
 		}
 	}
-}
-
-void AWCOCharacter::PlaceItem()
-{
-	const FVector Start = FirstPersonCameraComponent->GetComponentLocation();
-	const FVector End = Start + (FirstPersonCameraComponent->GetForwardVector() * InteractionDistance);
-	
-	FHitResult HitResult;
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(this);
-	QueryParams.AddIgnoredActor(CurrentHeldBottle);
-
-	const FCollisionShape SphereShape = FCollisionShape::MakeSphere(15.0f);
-
-	const bool bHit = GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
-
-	if (bHit)
+	else // Scenario C: We hit absolutely nothing (looking into empty space)
 	{
-		if (AActor* HitActor = HitResult.GetActor())
+		if (CurrentInteractable)
 		{
-		    TArray<UWCOSlotComponent*> ShelfSlots;
-		    HitActor->GetComponents<UWCOSlotComponent>(ShelfSlots);
-
-		    UWCOSlotComponent* ClosestSlot = nullptr;
-		    float ClosestDistSq = MAX_flt;
-
-		    // DEBUG: Draw a RED sphere exactly where your crosshair hit the physical wood
-		    DrawDebugSphere(GetWorld(), HitResult.Location, 5.f, 12, FColor::Red, false, 2.f);
-
-		    for (UWCOSlotComponent* Slot : ShelfSlots)
-		    {
-		        if (Slot && !Slot->bIsOccupied) 
-		        {
-		            float DistSq = FVector::DistSquared(HitResult.Location, Slot->GetComponentLocation());
-		            float ActualDistance = FMath::Sqrt(DistSq); // Convert squared to actual units (cm)
-		            
-		            // DEBUG: Draw a BLUE sphere at the slot's actual coordinate
-		            DrawDebugSphere(GetWorld(), Slot->GetComponentLocation(), 5.f, 12, FColor::Blue, false, 2.f);
-		            
-		            // DEBUG: Draw a GREEN line connecting your hit point to the slot
-		            DrawDebugLine(GetWorld(), HitResult.Location, Slot->GetComponentLocation(), FColor::Green, false, 2.f);
-		            
-		            // DEBUG: Print the exact distance to the screen
-		            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow, 
-		                FString::Printf(TEXT("Slot %s is %f cm away"), *Slot->GetName(), ActualDistance));
-
-		            // I bumped the threshold to 2500.f (50cm) just to see if distance was the issue!
-		            if (DistSq < ClosestDistSq && DistSq < 2500.f) 
-		            {
-		                ClosestDistSq = DistSq;
-		                ClosestSlot = Slot;
-		            }
-		        }
-		    }
-
-		    if (ClosestSlot)
-		    {
-		        GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green, 
-		            FString::Printf(TEXT("SUCCESS: Snapping to %s!"), *ClosestSlot->GetName()));
-		            
-		    	CurrentHeldBottle->AttachToComponent(ClosestSlot, FAttachmentTransformRules::KeepRelativeTransform);
-
-		    	// Shift the bottle forward so its center rests in the slot
-		    	// (Assuming the bottle is ~30cm tall, we shift it by 15cm)
-		    	CurrentHeldBottle->SetActorRelativeLocation(FVector(0.f, 0.f, -20.f));
-		        ClosestSlot->bIsOccupied = true;
-		        CurrentHeldBottle = nullptr; 
-		    }
-		    else
-		    {
-		        GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, TEXT("FAILED: No slot was close enough to the hit location!"));
-		    }
+			CurrentInteractable->Unhighlight();
+			CurrentInteractable = nullptr;
 		}
 	}
 }

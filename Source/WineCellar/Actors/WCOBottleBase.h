@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "WCOWineDBEnums.h"
 #include "GameFramework/Actor.h"
+#include "WineCellar/Interfaces/WCOInteractable.h"
 #include "WCOBottleBase.generated.h"
 
 class UWidgetComponent;
@@ -36,13 +37,17 @@ struct FWineData : public FTableRowBase
 };
 
 UCLASS()
-class WINECELLAR_API AWCOBottleBase : public AActor
+class WINECELLAR_API AWCOBottleBase : public AActor, public IWCOInteractable
 {
 	GENERATED_BODY()
 	
 public:	
 	
 	AWCOBottleBase();
+	
+	virtual void Interact(AWCOCharacter* Interactor) override;
+	virtual void Highlight() override;
+	virtual void Unhighlight() override;
 
 	// The spatial representation of the bottle
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
